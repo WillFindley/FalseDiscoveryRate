@@ -24,10 +24,30 @@ import org.apache.hadoop.conf.Configured;
 
 import org.apache.commons.math3.distribution.BetaDistribution;
 
+/**
+ * Generates a mixed uniform beta distribution of p-values in HDFS for testing False Discovery Rate protocols
+ *
+ * @author Will Findley
+ */ 
 public class RandomDataGenerationDriver extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
-		
+
+		if (args.length != 6) {
+			System.out.println("\n" + 
+					"This program generates a mixed uniform beta distribution of p-values " +  
+					"in HDFS for testing False Discovery Rate protocols. \n" + 
+					"Usage is: \n\n" +
+					"hadoop jar [jarFile] RandomDataGenerationDriver [args0] [args1] [args2] [args3] [args4] [args5] \n\n" + 
+					"args0 - number of mapper tasks \n" +
+					"args1 - number of records produced by each mapper \n" +
+					"args2 - pi0, the proportion of p-values that are uniformly distributed (false hypotheses) \n" +
+					"args3 - alpha, the alpha for the beta distribution; less than one yields smaller values (strong true hypotheses) \n" +
+					"args4 - beta, the beta for the beta distribution; greater than one yields larger values (weak true hypotheses) \n" +
+					"args5 - directories in which to write p-value xml.\n"
+					);
+			return;
+		}
 		int res = ToolRunner.run(new Configuration(), new RandomDataGenerationDriver(), args);
 		System.exit(res);
 	}
@@ -40,9 +60,9 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		int numRecordsPerTask = Integer.parseInt(args[1]);
 		Path outputDir = new Path(args[5]);
 
-		conf.set("pi0", args[2]);
-		conf.set("alpha", args[3]);
-		conf.set("beta", args[4]);
+		conf.set("pi0", args[2]);	// proportion of false hypotheses
+		conf.set("alpha", args[3]);	// effect of low p-values
+		conf.set("beta", args[4]);	// efffect of hight p-values
 		Job job = Job.getInstance(conf, "RandomDataGenerationDriver");
 		job.setJarByClass(RandomDataGenerationDriver.class);
 
@@ -159,15 +179,15 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		public Text getCurrentKey() throws IOException, InterruptedException {	
 			return key; 
 		}
-		
+
 		public NullWritable getCurrentValue() throws IOException, InterruptedException {
 			return value; 
 		}
-		
+
 		public float getProgress() throws IOException, InterruptedException { 
 			return (float) createdRecords / (float) numRecordsToCreate;
 		}
-		
+
 		public void close() throws IOException { 
 		} 
 	}
