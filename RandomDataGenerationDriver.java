@@ -22,6 +22,8 @@ import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.hadoop.conf.Configured;
 
+import org.apache.commons.math3.distribution.BetaDistribution;
+
 public class RandomDataGenerationDriver extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
@@ -36,8 +38,11 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 
 		int numMapTasks = Integer.parseInt(args[0]);
 		int numRecordsPerTask = Integer.parseInt(args[1]);
-		Path outputDir = new Path(args[2]);
+		Path outputDir = new Path(args[5]);
 
+		conf.set("pi0", args[2]);
+		conf.set("alpha", args[3]);
+		conf.set("beta", args[4]);
 		Job job = Job.getInstance(conf, "RandomDataGenerationDriver");
 		job.setJarByClass(RandomDataGenerationDriver.class);
 
@@ -79,7 +84,6 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 
 		public static final String NUM_MAP_TASKS = "random.generator.map.tasks";
 		public static final String NUM_RECORDS_PER_TASK = "random.generator.num.records.per.map.task";
-		public static final String RANDOM_WORD_LIST = "random.generator.random.word.file";
 
 		public List<InputSplit> getSplits(JobContext job) throws IOException {
 
@@ -117,17 +121,31 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		private Text key = new Text();
 		private NullWritable value = NullWritable.get();
 		private Random rndm = new Random();
+		private double pi0 = 1.0; // proportion of false hypotheses
+		private BetaDistribution TrueHypotheses = new BetaDistribution(1.0, 1.0);
 
 		public void initialize(InputSplit split, TaskAttemptContext context) throws IOException, InterruptedException {
 
 			this.numRecordsToCreate = context.getConfiguration().getInt(RandomPValueInputFormat.NUM_RECORDS_PER_TASK, -1);
+			this.pi0 = Double.parseDouble(context.getConfiguration().get("pi0"));
+			this.TrueHypotheses = new BetaDistribution(Double.parseDouble(context.getConfiguration().get("alpha")),
+					Double.parseDouble(context.getConfiguration().get("beta")));
+		}
+
+		private double calculateP() {
+
+			if (rndm.nextDouble() <= this.pi0) {
+				return rndm.nextDouble();
+			} else {
+				return TrueHypotheses.inverseCumulativeProbability(rndm.nextDouble());
+			}
 		}
 
 		public boolean nextKeyValue() throws IOException, InterruptedException {
 
 			if (createdRecords < numRecordsToCreate) {
 				int rowId = Math.abs(rndm.nextInt()) % 1000000000;
-				double p = rndm.nextDouble();
+				double p = calculateP();
 
 				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" />";
 				key.set(randomRecord); 
