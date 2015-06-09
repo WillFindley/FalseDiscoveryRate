@@ -22,11 +22,21 @@ import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
+import org.apache.hadoop.conf.Configured;
 
-public class RandomDataGenerationDriver{
+public class RandomDataGenerationDriver extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
-		Configuration conf = new Configuration();
+		
+		int res = ToolRunner.run(new Configuration(), new RandomDataGenerationDriver(), args);
+		System.exit(res);
+	}
+
+	public int run(String[] args) throws Exception {
+
+		Configuration conf = this.getConf();
 
 		int numMapTasks = Integer.parseInt(args[0]);
 		int numRecordsPerTask = Integer.parseInt(args[1]);
@@ -50,7 +60,7 @@ public class RandomDataGenerationDriver{
 		job.setOutputKeyClass(Text.class);
 		job.setOutputValueClass(NullWritable.class);
 
-		System.exit(job.waitForCompletion(true) ? 0 : 2);
+		return job.waitForCompletion(true) ? 0 : 1;
 	}
 
 	// There's not much in here other than empty overrides because we're not reading in anything, just writing
