@@ -1,7 +1,3 @@
-import java.io.FileReader;
-import java.io.BufferedReader;
-import java.net.URI;
-import java.text.SimpleDateFormat;
 import java.util.Random;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,8 +36,7 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 
 		int numMapTasks = Integer.parseInt(args[0]);
 		int numRecordsPerTask = Integer.parseInt(args[1]);
-		Path wordList = new Path(args[2]);
-		Path outputDir = new Path(args[3]);
+		Path outputDir = new Path(args[2]);
 
 		Job job = Job.getInstance(conf, "RandomDataGenerationDriver");
 		job.setJarByClass(RandomDataGenerationDriver.class);
@@ -49,11 +44,10 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		// Because we're mapping out random data and not analyzing
 		job.setNumReduceTasks(0);
 
-		job.setInputFormatClass(RandomStackOverflowInputFormat.class);
+		job.setInputFormatClass(RandomPValueInputFormat.class);
 
-		RandomStackOverflowInputFormat.setNumMapTasks(job, numMapTasks);
-		RandomStackOverflowInputFormat.setNumRecordPerTask(job, numRecordsPerTask);
-		RandomStackOverflowInputFormat.setRandomWordList(job, wordList);
+		RandomPValueInputFormat.setNumMapTasks(job, numMapTasks);
+		RandomPValueInputFormat.setNumRecordPerTask(job, numRecordsPerTask);
 
 		TextOutputFormat.setOutputPath(job, outputDir);
 
@@ -81,7 +75,7 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		}
 	}
 
-	public static class RandomStackOverflowInputFormat extends InputFormat<Text,NullWritable> {
+	public static class RandomPValueInputFormat extends InputFormat<Text,NullWritable> {
 
 		public static final String NUM_MAP_TASKS = "random.generator.map.tasks";
 		public static final String NUM_RECORDS_PER_TASK = "random.generator.num.records.per.map.task";
@@ -102,7 +96,7 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		public RecordReader<Text, NullWritable> createRecordReader(InputSplit split, TaskAttemptContext context)
 			throws IOException, InterruptedException {
 
-			RandomStackOverflowRecordReader rr = new RandomStackOverflowRecordReader();
+			RandomPValueRecordReader rr = new RandomPValueRecordReader();
 			rr.initialize(split, context);
 			return rr;
 		}
@@ -114,50 +108,28 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		public static void setNumRecordPerTask(Job job, int i) {
 			job.getConfiguration().setInt(NUM_RECORDS_PER_TASK, i);
 		}
-
-		public static void setRandomWordList(Job job, Path file) {
-			job.addCacheFile(file.toUri());
-		}
 	}
 
-	public static class RandomStackOverflowRecordReader extends RecordReader<Text, NullWritable> {
+	public static class RandomPValueRecordReader extends RecordReader<Text, NullWritable> {
 
 		private int numRecordsToCreate = 0;
 		private int createdRecords = 0;
 		private Text key = new Text();
 		private NullWritable value = NullWritable.get();
 		private Random rndm = new Random();
-		private ArrayList<String> randomWords = new ArrayList<String>();
-		private SimpleDateFormat frmt = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS");
 
 		public void initialize(InputSplit split, TaskAttemptContext context) throws IOException, InterruptedException {
 
-			this.numRecordsToCreate = context.getConfiguration().getInt(RandomStackOverflowInputFormat.NUM_RECORDS_PER_TASK, -1);
-
-			URI[] files = context.getCacheFiles();
-
-			BufferedReader rdr = new BufferedReader(new FileReader(files[0].toString()));
-
-			String line;
-			while ((line = rdr.readLine()) != null) {
-				randomWords.add(line);
-			}
-			rdr.close();
+			this.numRecordsToCreate = context.getConfiguration().getInt(RandomPValueInputFormat.NUM_RECORDS_PER_TASK, -1);
 		}
 
 		public boolean nextKeyValue() throws IOException, InterruptedException {
 
 			if (createdRecords < numRecordsToCreate) {
-				int score = Math.abs(rndm.nextInt()) % 15000;
 				int rowId = Math.abs(rndm.nextInt()) % 1000000000;
-				int postId = Math.abs(rndm.nextInt()) % 100000000; 
-				int userId = Math.abs(rndm.nextInt()) % 1000000; 
-				String creationDate = frmt.format(Math.abs(rndm.nextLong()));
+				double p = rndm.nextDouble();
 
-				String text = getRandomText();
-
-				String randomRecord = "<row Id=\"" + rowId + "\" PostId=\"" + postId + "\" Score=\"" + score + "\" Text=\""
-					+ text + "\" CreationDate=\"" + creationDate + "\" UserId\"=" + userId + "\" />";
+				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" />";
 				key.set(randomRecord); 
 				createdRecords++; 
 				return true;
@@ -166,16 +138,6 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 			}
 		}
 
-		private String getRandomText() {
-			StringBuilder bldr = new StringBuilder();
-			int numWords = Math.abs(rndm.nextInt()) % 30 + 1;
-
-			for(int i = 0; i < numWords; i++) { 
-				bldr.append(randomWords.get(Math.abs(rndm.nextInt()) % randomWords.size()) + " ");
-			}
-			return bldr.toString(); 
-		}
-			
 		public Text getCurrentKey() throws IOException, InterruptedException {	
 			return key; 
 		}
