@@ -25,7 +25,7 @@ import org.apache.hadoop.conf.Configured;
 import org.apache.commons.math3.distribution.BetaDistribution;
 
 /**
- * Generates a mixed uniform beta distribution of p-values in HDFS for testing False Discovery Rate protocols
+ * Generates a mixed uniform beta distribution of p-values randomly distributed throughout HDFS for testing False Discovery Rate protocols
  *
  * @author Will Findley
  */ 
@@ -36,7 +36,7 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		if (args.length != 6) {
 			System.out.println("\n" + 
 					"This program generates a mixed uniform beta distribution of p-values " +  
-					"in HDFS for testing False Discovery Rate protocols. \n" + 
+					"randomly distributed throughout HDFS for testing False Discovery Rate protocols. \n" + 
 					"Usage is: \n\n" +
 					"hadoop jar [jarFile] RandomDataGenerationDriver [args0] [args1] [args2] [args3] [args4] [args5] \n\n" + 
 					"args0 - number of mapper tasks \n" +
@@ -44,7 +44,7 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 					"args2 - pi0, the proportion of p-values that are uniformly distributed (false hypotheses) \n" +
 					"args3 - alpha, the alpha for the beta distribution; less than one yields smaller values (strong true hypotheses) \n" +
 					"args4 - beta, the beta for the beta distribution; greater than one yields larger values (weak true hypotheses) \n" +
-					"args5 - directories in which to write p-value xml.\n"
+					"args5 - slave directory in which to write p-value xml.\n"
 					);
 			return;
 		}
