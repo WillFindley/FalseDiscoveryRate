@@ -2,7 +2,7 @@
 public class cdfFDRTest {  
 
 	Random rndm = new Random();
-	double[] pValues = {};
+	double[][] pValues = new double[1][2];	// first column is p-value, second is empirical CDF ordinate
 	double pi0 = 1.0;
 	BetaDistribution TrueHypotheses = new BetaDistribution(1.0, 1.0);
 
@@ -17,9 +17,9 @@ public class cdfFDRTest {
 		this.pi0 = pi0;
 		this.TrueHypotheses = new BetaDistribution(alpha,beta);
 		
-		this.pValues = new double[numPValues]
+		this.pValues = new double[numPValues][2];
 		for (int i = 0; i < numPValues; i++) {
-			this.pValues[i] = calculateP();
+			this.pValues[i][0] = calculateP();
 		}
 	}
 
@@ -34,24 +34,46 @@ public class cdfFDRTest {
 
 	public double[] run() {
 		
-		// sort pValues for empirical CDF calculation
-		this.pValues = Arrays.sort(this.pValues);
-		
-		double[][][] grid = new double[21][21][21]; 
-		
-		return getOptCoeffs(grid);
+		calculateEmpiricalCDF();
+		return getOptCoeffs();
 	}
 
-	public double[][][] getOptCoeffs(double[][][] grid) {	
+	private void calculateEmpiricalCDF() {
+		
+		// sort on p-values so that second column can be filled with empirical CDF values
+		Arrays.sort(this.pValues, new Comparator<Double[]>() {
+			@Override
+			public int compare(final Double[] entry1, final Double[] entry2) {
+				final Double p1 = entry1[0];
+				final Double p2 = entry2[0];
+				return p1.compareTo(p2);
+			}
+		});
+
+		// calculate emprical CDF values
+		for (int i = 1; i <= this.pValues.length; i++) {
+			this.pValues[i-1][1] = i / (double) this.pValues.length;
+		}
+	}
+
+	public double[] getOptCoeffs() {	
 	
-		double[] coeffs = new double[3];
+		double[] coeffs = {0.5, 0.5, 5};
+		double maxDelta = 1;
 
 		int sigDigits = 4; // number of significant digits in the model parameters;
 		double tolerance = 1.0 / Math.pow(10,sigDigits);
 		do {
-			
-		} while (stepPi0 >= tolerance);
+			maxDelta = stochasticGradientDescent(coeffs);	
+		} while (maxDelta >= tolerance);
 
 		return coeffs;	
+	}
+
+	public double stochasticGradientDescent(double[] coeffs) {
+
+		for (int i = 0; i < this.pValues.length; i++) {
+			
+		}
 	}
 }
