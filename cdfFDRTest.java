@@ -1,4 +1,3 @@
-
 public class cdfFDRTest {  
 
 	Random rndm = new Random();
@@ -64,16 +63,62 @@ public class cdfFDRTest {
 		int sigDigits = 4; // number of significant digits in the model parameters;
 		double tolerance = 1.0 / Math.pow(10,sigDigits);
 		do {
-			maxDelta = stochasticGradientDescent(coeffs);	
+			maxDelta = stochasticGradientDescent(coeffs, tolerance);	
 		} while (maxDelta >= tolerance);
 
 		return coeffs;	
 	}
 
-	public double stochasticGradientDescent(double[] coeffs) {
+	public double stochasticGradientDescent(double[] coeffs, double gradientStepSize) {
 
-		for (int i = 0; i < this.pValues.length; i++) {
-			
+		shuffleEmpiricalCDF();
+		
+		double maxDelta = 0;
+		double learningRate = 0.5; 
+		double momentum = 0.5;
+		double deltaPi0 = 0;
+		double deltaAlpha = 0;
+		double deltaBeta = 0;
+		for (double[] data : this.pValues) {
+
+			deltaPi0 = momentum * deltaPi0 + (1-momentum) * learningRate *
+				(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0] + (gradientStepSize/2),coeffs[1],coeffs[2]),2) - 
+				Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0] - (gradientStepSize/2),coeffs[1],coeffs[2]),2)) / gradientStepSize;
+			deltaAlpha = momentum * deltaAlpha + (1-momentum) * learningRate *
+				(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1] + (gradientStepSize/2),coeffs[2]),2) -
+				Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1] - (gradientStepSize/2),coeffs[2]),2)) / gradientStepSize;
+			deltaBeta = momentum * deltaBeta + (1-momentum) * learningRate *
+				(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1],coeffs[2] + (gradientStepSize/2)),2) -
+				Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1],coeffs[2] - (gradientStepSize/2)),2)) / gradientStepSize;
+			maxDelta = Math.max(deltaPi0,Math.max(deltaAlpha,deltaBeta));
+
+			System.out.println("pi0: " + deltaPi0 + "\t deltaAlpha: " + deltaAlpha + "\t deltaBeta: " + deltaBeta);
+			System.out.println("maxDelta: " + maxDelta);
+
+			coeffs[0] -= deltaPi0;
+			coeffs[1] -= deltaAlpha;
+			coeffs[2] -= deltaBeta;
+
+			this.pi0 = coeffs[0];
+			this.TrueHypotheses = new BetaDistribution(coeffs[1], coeffs[2]);
 		}
+		return maxDelta;	
+	}
+
+	public void shuffleEmpiricalCDF() {
+
+		int ranSpot;
+		double[] tmp;
+		for (int i = 0; i < this.pValues.length; i++) {
+			ranSpot = rndm.nextInt(this.pValues.length-i) + i;
+			tmp = this.pValues[i].clone();
+			this.pValues[i] = this.pValues[ranSpot].clone();
+			this.pValues[ranSpot] = tmp.clone();
+		}
+	}
+
+	public double calcModelCDFValue(double p, double pi0, double alpha, double beta) {
+
+		return pi0*p + (1-pi0)*new BetaDistribution(alpha, beta).cumulativeProbability(p);
 	}
 }
