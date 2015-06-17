@@ -1,3 +1,8 @@
+import org.apache.commons.math3.distribution.BetaDistribution;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.Random;
+
 public class cdfFDRTest {  
 
 	Random rndm = new Random();
@@ -7,7 +12,7 @@ public class cdfFDRTest {
 
 	public static void main(String[] args) {
 		
-		cdfFDRTest test = new cdfFDRTest(0.5, 0.5, 5.0, 300);
+		cdfFDRTest test = new cdfFDRTest(.85, .32, 3.5, 1000);
 		System.out.println(Arrays.toString(test.run()));
 	}
 
@@ -40,12 +45,10 @@ public class cdfFDRTest {
 	private void calculateEmpiricalCDF() {
 		
 		// sort on p-values so that second column can be filled with empirical CDF values
-		Arrays.sort(this.pValues, new Comparator<Double[]>() {
+		Arrays.sort(this.pValues, new Comparator<double[]>() {
 			@Override
-			public int compare(final Double[] entry1, final Double[] entry2) {
-				final Double p1 = entry1[0];
-				final Double p2 = entry2[0];
-				return p1.compareTo(p2);
+			public int compare(double[] entry1, double[] entry2) {
+				return Double.compare(entry1[0],entry2[0]);
 			}
 		});
 
@@ -56,25 +59,29 @@ public class cdfFDRTest {
 	}
 
 	public double[] getOptCoeffs() {	
-	
-		double[] coeffs = {0.5, 0.5, 5};
-		double maxDelta = 1;
+
+		// pi0 is 1 because should always conservatively start by overestimating the proportion of negatives	
+		double[] coeffs = {1.0, rndm.nextDouble(), 1+rndm.nextInt(9)+rndm.nextDouble()};
+		double avDelta = 1;
+		double oldDelta = avDelta;
+		double learningRate = 2;
 
 		int sigDigits = 4; // number of significant digits in the model parameters;
 		double tolerance = 1.0 / Math.pow(10,sigDigits);
 		do {
-			maxDelta = stochasticGradientDescent(coeffs, tolerance);	
-		} while (maxDelta >= tolerance);
+			oldDelta = avDelta;
+			avDelta = stochasticGradientDescent(coeffs, tolerance, learningRate);
+			if (oldDelta < avDelta) learningRate *= 0.9;
+		} while (avDelta >= tolerance);
 
 		return coeffs;	
 	}
 
-	public double stochasticGradientDescent(double[] coeffs, double gradientStepSize) {
+	public double stochasticGradientDescent(double[] coeffs, double gradientStepSize, double learningRate) {
 
 		shuffleEmpiricalCDF();
 		
-		double maxDelta = 0;
-		double learningRate = 0.5; 
+		double avDelta = 0;
 		double momentum = 0.5;
 		double deltaPi0 = 0;
 		double deltaAlpha = 0;
@@ -90,19 +97,19 @@ public class cdfFDRTest {
 			deltaBeta = momentum * deltaBeta + (1-momentum) * learningRate *
 				(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1],coeffs[2] + (gradientStepSize/2)),2) -
 				Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1],coeffs[2] - (gradientStepSize/2)),2)) / gradientStepSize;
-			maxDelta = Math.max(deltaPi0,Math.max(deltaAlpha,deltaBeta));
+			avDelta = (avDelta + Math.sqrt(Math.pow(deltaPi0,2) + Math.pow(deltaAlpha,2) + Math.pow(deltaBeta,2)))/2;
 
-			System.out.println("pi0: " + deltaPi0 + "\t deltaAlpha: " + deltaAlpha + "\t deltaBeta: " + deltaBeta);
-			System.out.println("maxDelta: " + maxDelta);
+//			System.out.println("deltaPi0: " + deltaPi0 + "\t deltaAlpha: " + deltaAlpha + "\t deltaBeta: " + deltaBeta);
+			System.out.println("avDelta: " + avDelta);
 
-			coeffs[0] -= deltaPi0;
-			coeffs[1] -= deltaAlpha;
-			coeffs[2] -= deltaBeta;
+			coeffs[0] = Math.min(1.0, Math.max(0.0, coeffs[0] - deltaPi0));
+			coeffs[1] = Math.min(1.0-gradientStepSize, Math.max(gradientStepSize, coeffs[1] - deltaAlpha));
+			coeffs[2] = Math.max(1.0+gradientStepSize, coeffs[2] - deltaBeta);
 
 			this.pi0 = coeffs[0];
 			this.TrueHypotheses = new BetaDistribution(coeffs[1], coeffs[2]);
 		}
-		return maxDelta;	
+		return avDelta;	
 	}
 
 	public void shuffleEmpiricalCDF() {
