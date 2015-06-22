@@ -35,7 +35,8 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 		job.setJarByClass(MapReduceCDFFalseDiscoveryRate.class);
 
 		job.setMapperClass(FDRCalculationMapping.class);
-		job.setCombinerClass(FDRModelAveragingReducer.class);
+		// combiner could be done to optimize, but would have to keep track of number of estimates for each one
+		// job.setCombinerClass(FDRModelAveragingReducer.class);
 		job.setReducerClass(FDRModelAveragingReducer.class);
 
 		job.setOutputKeyClass(Text.class);
@@ -178,6 +179,31 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 	}
 
-	public static class FDRModelAveragingReducer extends Reducer<IntWritable, CountAverageTuple, IntWritable, CountAverageTuple> {
+	public static class FDRModelAveragingReducer extends Reducer<Text, ArrayWritable, Text, ArrayWritable> {
+	
+		private ArrayWritable result = new ArrayWritable();
+
+		public void reduce(Text key, Iterable<ArrayWritable> values, Context context) throws IOException, InterruptedException {
+
+			double[] coeffs = {0, 0, 0};
+			int count = 0;
+			for (ArrayWritable val : values) {
+				coeffs[0] += ((Double[]) val)[0].doubleValue();
+				coeffs[1] += ((Double[]) val)[1].doubleValue();
+				coeffs[2] += ((Double[]) val)[2].doubleValue();	
+				result.set(coeffs);
+				count++;				
+			}
+
+			// average the coefficients
+			for (int i = 0; i < coeffs.length; i++) {
+				coeffs[0] = ((Double[]) val)[0].doubleValue() / count;
+				coeffs[1] = ((Double[]) val)[1].doubleValue() / count;
+				coeffs[2] = ((Double[]) val)[2].doubleValue() / count;	
+				result.set(coeffs);
+			}
+
+			context.write(key, result);
+		}
 	}
 }
