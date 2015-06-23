@@ -1,25 +1,21 @@
+import org.apache.commons.math3.distribution.BetaDistribution;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.Random;
 
-/**
- * Generates a 
- *
- * @author Will Findley
- */ 
+import org.apache.hadoop.io.ArrayWritable;
+
 public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
 
 		if (args.length != 6) {
 			System.out.println("\n" + 
-					"This program generates a mixed uniform beta distribution of p-values " +  
-					"randomly distributed throughout HDFS for testing False Discovery Rate protocols. \n" + 
+					"This program runs a mapreduce to determine the coefficients for a beta-uniform model of the p-value CDF \n" +  
 					"Usage is: \n\n" +
-					"hadoop jar [jarFile] RandomDataGenerationDriver [args0] [args1] [args2] [args3] [args4] [args5] \n\n" + 
-					"args0 - number of mapper tasks \n" +
-					"args1 - number of records produced by each mapper \n" +
-					"args2 - pi0, the proportion of p-values that are uniformly distributed (false hypotheses) \n" +
-					"args3 - alpha, the alpha for the beta distribution; less than one yields smaller values (strong true hypotheses) \n" +
-					"args4 - beta, the beta for the beta distribution; greater than one yields larger values (weak true hypotheses) \n" +
-					"args5 - slave directory in which to write p-value xml.\n"
+					"hadoop jar [jarFile] RandomDataGenerationDriver [args0] [args1] \n\n" + 
+					"args0 - input path of p-values \n" +
+					"args1 - output path of coefficients \n" 
 					);
 			return;
 		}
@@ -48,18 +44,92 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 		return job.waitForCompletion(true) ? 0 : 1;
 	}
 
-	public static class FDRCalculationMapping extends Mapper<Object, Text, Text, ArrayWritable> {
+	public class Pi0AlphaBetaCountTuple implements Writable {
+
+		private double pi0 = 0;
+		private double alpha = 0;
+		private double beta = 0;
+		private long count = 0;
+
+		public double getPi0() {
+			
+			return this.pi0;
+		}
+
+		public void setPi0(double pi0) {
+
+			this.pi0 = pi0;
+		}
+
+		public double getAlpha() {
+
+			return this.alpha;
+		}
+
+		public void setAlpha(double alpha) {
+
+			this.alpha = alpha;
+		}
+
+		public double getBeta() {
+
+			return this.beta;
+		}
+
+		public void setBeta(double beta) {
+
+			this.beta = beta;
+		}
+
+		public long getCount() {
+
+			return this.count;
+		}
+
+		public void setCount(long count) {
+
+			this.count = count;
+		}
+
+		public void readFields(DataInput in) throws IOException {
+
+			this.pi0 = in.readDouble();
+			this.alpha = in.readDouble();
+			this.beta = in.readDouble();
+			this.count = in.readLong();
+		}
+
+		public void write(DataOutput out) throws IOException {
+
+			out.writeDouble(this.pi0);
+			out.writeDouble(this.alpha);
+			out.writeDouble(this.beta);
+			out.writeLong(this.count);
+		}
+
+		public String toString() {
+
+			return "pi0: " + this.pi0 + "\t alpha: " + this.alpha + "\t beta: " + this.beta + "\t count: " + this.count;
+		}
+	}
+
+	public static class FDRCalculationMapping extends Mapper<Object, Text, Text, Pi0AlphaBetaCountTuple> {
 
 		// allContribute is only one text entry because everything will be averaged together in the reducer 
 		private Text allContribute = new Text("BUM coefficients");
-		private ArrayWritable coeffAns = new ArrayWritable();
+		private Pi0AlphaBetaCountTuple coeffAns = new Pi0AlphaBetaCountTuple();
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 
 			Double[] tmpPValues = transformXmlToPValues(value.toString());
 			double[][] pValues = calculateEmpiricalCDF(tmpPValues);
 
-			coeffAns.set(getOptCoeffs(pValues));
+			double[] coeffs = getOptCoeffs(pValues);
+
+			coeffAns.setPi0(coeffs[0]);
+			coeffAns.setAlpha(coeffs[1]);
+			coeffAns.setBeta(coeffs[2]);
+			coeffAns.setCount(1);
 
 			// BUM = Beta-Uniform Distribution
 			context.write(allContribute, coeffAns);
@@ -179,29 +249,27 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 	}
 
-	public static class FDRModelAveragingReducer extends Reducer<Text, ArrayWritable, Text, ArrayWritable> {
+	public static class FDRModelAveragingReducer extends Reducer<Text, Pi0AlphaBetaCountTuple, Text, Pi0AlphaBetaCountTuple> {
 	
-		private ArrayWritable result = new ArrayWritable();
+		private Pi0AlphaBetaCountTuple result = new Pi0AlphaBetaCountTuple();
 
-		public void reduce(Text key, Iterable<ArrayWritable> values, Context context) throws IOException, InterruptedException {
+		public void reduce(Text key, Iterable<Pi0AlphaBetaCountTuple> values, Context context) throws IOException, InterruptedException {
 
-			double[] coeffs = {0, 0, 0};
-			int count = 0;
-			for (ArrayWritable val : values) {
-				coeffs[0] += ((Double[]) val)[0].doubleValue();
-				coeffs[1] += ((Double[]) val)[1].doubleValue();
-				coeffs[2] += ((Double[]) val)[2].doubleValue();	
-				result.set(coeffs);
-				count++;				
+			double pi0 = 0;
+			double alpha = 0;
+			double beta = 0;
+			long count = 0;
+			for (Pi0AlphaBetaCountTuple val : values) {
+				pi0 += val.getCount() * val.getPi0();
+				alpha += val.getCount() * val.getAlpha();
+				beta += val.getCount() * val.getBeta();
+				count += val.getCount();
 			}
 
-			// average the coefficients
-			for (int i = 0; i < coeffs.length; i++) {
-				coeffs[0] = ((Double[]) val)[0].doubleValue() / count;
-				coeffs[1] = ((Double[]) val)[1].doubleValue() / count;
-				coeffs[2] = ((Double[]) val)[2].doubleValue() / count;	
-				result.set(coeffs);
-			}
+			result.setCount(count);
+			result.setPi0(pi0 / count);
+			result.setAlpha(alpha / count);
+			result.setBeta(beta / count);
 
 			context.write(key, result);
 		}
