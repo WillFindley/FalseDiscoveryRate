@@ -2,24 +2,36 @@ import org.apache.commons.math3.distribution.BetaDistribution;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Random;
+import java.util.ArrayList;
+import java.io.IOException;
 
-import org.apache.hadoop.io.ArrayWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.conf.Configured;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.util.ToolRunner;
 
 public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
 
-		if (args.length != 6) {
+		if (args.length != 2) {
 			System.out.println("\n" + 
 					"This program runs a mapreduce to determine the coefficients for a beta-uniform model of the p-value CDF \n" +  
 					"Usage is: \n\n" +
-					"hadoop jar [jarFile] RandomDataGenerationDriver [args0] [args1] \n\n" + 
+					"hadoop jar [jarFile] MapReduceCDFFalseDiscoveryRate [args0] [args1] \n\n" + 
 					"args0 - input path of p-values \n" +
 					"args1 - output path of coefficients \n" 
 					);
 			return;
 		}
-		int res = ToolRunner.run(new Configuration(), new RandomDataGenerationDriver(), args);
+		int res = ToolRunner.run(new Configuration(), new MapReduceCDFFalseDiscoveryRate(), args);
 		System.exit(res);
 	}
 
@@ -30,87 +42,19 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 		Job job = Job.getInstance(conf, "MapReduceCDFFalseDiscoveryRate");
 		job.setJarByClass(MapReduceCDFFalseDiscoveryRate.class);
 
+		job.setJobName("calcBUM");
+
 		job.setMapperClass(FDRCalculationMapping.class);
-		// combiner could be done to optimize, but would have to keep track of number of estimates for each one
-		// job.setCombinerClass(FDRModelAveragingReducer.class);
+		job.setCombinerClass(FDRModelAveragingReducer.class);
 		job.setReducerClass(FDRModelAveragingReducer.class);
 
-		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(IntWritable.class);
+		//job.setOutputKeyClass(Text.class);
+		//job.setOutputValueClass(IntWritable.class);
 
-		FileInputFormat.addInputPath(job, new Path(otherArgs[0]));
-		FileOutputFormat.setOutputPath(job, new Path(otherArgs[1]));
+		FileInputFormat.addInputPath(job, new Path(args[0]));
+		FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
 		return job.waitForCompletion(true) ? 0 : 1;
-	}
-
-	public class Pi0AlphaBetaCountTuple implements Writable {
-
-		private double pi0 = 0;
-		private double alpha = 0;
-		private double beta = 0;
-		private long count = 0;
-
-		public double getPi0() {
-			
-			return this.pi0;
-		}
-
-		public void setPi0(double pi0) {
-
-			this.pi0 = pi0;
-		}
-
-		public double getAlpha() {
-
-			return this.alpha;
-		}
-
-		public void setAlpha(double alpha) {
-
-			this.alpha = alpha;
-		}
-
-		public double getBeta() {
-
-			return this.beta;
-		}
-
-		public void setBeta(double beta) {
-
-			this.beta = beta;
-		}
-
-		public long getCount() {
-
-			return this.count;
-		}
-
-		public void setCount(long count) {
-
-			this.count = count;
-		}
-
-		public void readFields(DataInput in) throws IOException {
-
-			this.pi0 = in.readDouble();
-			this.alpha = in.readDouble();
-			this.beta = in.readDouble();
-			this.count = in.readLong();
-		}
-
-		public void write(DataOutput out) throws IOException {
-
-			out.writeDouble(this.pi0);
-			out.writeDouble(this.alpha);
-			out.writeDouble(this.beta);
-			out.writeLong(this.count);
-		}
-
-		public String toString() {
-
-			return "pi0: " + this.pi0 + "\t alpha: " + this.alpha + "\t beta: " + this.beta + "\t count: " + this.count;
-		}
 	}
 
 	public static class FDRCalculationMapping extends Mapper<Object, Text, Text, Pi0AlphaBetaCountTuple> {
@@ -137,19 +81,22 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 		public static Double[] transformXmlToPValues(String xml) {
 
+			System.out.println(xml);
+
 			ArrayList<Double> pValues = new ArrayList<Double>();
 
 			String startDelim = "p=\"";
-			String stopDelim = "\" />";
-			int startIndex = pValues.indexOf(startDelim) + startDelim.length();
+			String stopDelim = "\" q=";
+			int startIndex = 0; 
 			int stopIndex = 0;
-			do {
-				stopIndex = pValues.indexOf(stopDelim,startIndex);
-				pValues.add(Double.parseDouble(pValues.substring(startIndex,stopIndex)));
-				startIndex = pValues.indexOf(startDelim,stopIndex) + startDelim.length();
-			} while (startIndex != -1);
+			while ((startIndex = xml.indexOf(startDelim,stopIndex)) >= 0) {
+				startIndex += startDelim.length();
+				stopIndex = xml.indexOf(stopDelim,startIndex);
+				System.out.println("start: " + startIndex + "\t stop: " + stopIndex);
+				pValues.add(Double.parseDouble(xml.substring(startIndex,stopIndex)));
+			}
 
-			return (double[]) (pValues.toArray()); 
+			return pValues.toArray(new Double[pValues.size()]);
 		}
 
 		private double[][] calculateEmpiricalCDF(Double[] tmpPValues) {
@@ -197,7 +144,7 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 			return coeffs;	
 		}
 
-		private double stochasticGradientDescent(double[][] pValues, double[] coeffs, double tolerance, double learningRate) {
+		private double stochasticGradientDescent(double[][] pValues, double[] coeffs, double gradientStepSize, double learningRate) {
 
 			pValues = shuffleEmpiricalCDF(pValues);
 
@@ -231,6 +178,8 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 		public double[][] shuffleEmpiricalCDF(double[][] pValues) {
 
+			Random rndm = new Random();
+
 			int ranSpot;
 			double[] tmp;
 			for (int i = 0; i < pValues.length; i++) {
@@ -250,7 +199,7 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 	}
 
 	public static class FDRModelAveragingReducer extends Reducer<Text, Pi0AlphaBetaCountTuple, Text, Pi0AlphaBetaCountTuple> {
-	
+
 		private Pi0AlphaBetaCountTuple result = new Pi0AlphaBetaCountTuple();
 
 		public void reduce(Text key, Iterable<Pi0AlphaBetaCountTuple> values, Context context) throws IOException, InterruptedException {

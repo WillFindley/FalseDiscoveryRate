@@ -167,7 +167,7 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 				int rowId = Math.abs(rndm.nextInt()) % 1000000000;
 				double p = calculateP();
 
-				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" />";
+				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" q=\"" + 1 + "\" />";
 				key.set(randomRecord); 
 				createdRecords++; 
 				return true;
