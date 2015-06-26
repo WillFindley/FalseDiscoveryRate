@@ -27,7 +27,7 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 					"Usage is: \n\n" +
 					"hadoop jar [jarFile] MapReduceCDFFalseDiscoveryRate [args0] [args1] \n\n" + 
 					"args0 - input path of p-values \n" +
-					"args1 - output path of coefficients \n" 
+					"args1 - output path of coefficients \n"
 					);
 			return;
 		}
@@ -62,41 +62,42 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 		// allContribute is only one text entry because everything will be averaged together in the reducer 
 		private Text allContribute = new Text("BUM coefficients");
 		private Pi0AlphaBetaCountTuple coeffAns = new Pi0AlphaBetaCountTuple();
+		private ArrayList<Double> tmpPValues = new ArrayList<Double>();
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 
-			Double[] tmpPValues = transformXmlToPValues(value.toString());
-			double[][] pValues = calculateEmpiricalCDF(tmpPValues);
+			tmpPValues.add(transformXmlToPValues(value.toString()));
 
-			double[] coeffs = getOptCoeffs(pValues);
+			int numSamplesForFit = 100;  // how many pvalues are used for fitting the BUM
+			if (tmpPValues.size() == numSamplesForFit) {
 
-			coeffAns.setPi0(coeffs[0]);
-			coeffAns.setAlpha(coeffs[1]);
-			coeffAns.setBeta(coeffs[2]);
-			coeffAns.setCount(1);
+				double[][] pValues = calculateEmpiricalCDF(tmpPValues.toArray(new Double[numSamplesForFit]));
+				tmpPValues = new ArrayList<Double>();
 
-			// BUM = Beta-Uniform Distribution
-			context.write(allContribute, coeffAns);
+				double[] coeffs = getOptCoeffs(pValues);
+
+				coeffAns.setPi0(coeffs[0]);
+				coeffAns.setAlpha(coeffs[1]);
+				coeffAns.setBeta(coeffs[2]);
+				coeffAns.setCount(1);
+
+				// BUM = Beta-Uniform Distribution
+				context.write(allContribute, coeffAns);
+			}
 		}
 
-		public static Double[] transformXmlToPValues(String xml) {
-
-			System.out.println(xml);
-
-			ArrayList<Double> pValues = new ArrayList<Double>();
+		public static Double transformXmlToPValues(String xml) {
 
 			String startDelim = "p=\"";
 			String stopDelim = "\" q=";
 			int startIndex = 0; 
 			int stopIndex = 0;
-			while ((startIndex = xml.indexOf(startDelim,stopIndex)) >= 0) {
-				startIndex += startDelim.length();
-				stopIndex = xml.indexOf(stopDelim,startIndex);
-				System.out.println("start: " + startIndex + "\t stop: " + stopIndex);
-				pValues.add(Double.parseDouble(xml.substring(startIndex,stopIndex)));
-			}
 
-			return pValues.toArray(new Double[pValues.size()]);
+			startIndex = xml.indexOf(startDelim,stopIndex);
+			startIndex += startDelim.length();
+			stopIndex = xml.indexOf(stopDelim,startIndex);
+
+			return Double.parseDouble(xml.substring(startIndex,stopIndex));
 		}
 
 		private double[][] calculateEmpiricalCDF(Double[] tmpPValues) {
