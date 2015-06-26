@@ -21,13 +21,14 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
 
-		if (args.length != 2) {
+		if (args.length != 3) {
 			System.out.println("\n" + 
 					"This program runs a mapreduce to determine the coefficients for a beta-uniform model of the p-value CDF \n" +  
 					"Usage is: \n\n" +
 					"hadoop jar [jarFile] MapReduceCDFFalseDiscoveryRate [args0] [args1] \n\n" + 
 					"args0 - input path of p-values \n" +
-					"args1 - output path of coefficients \n"
+					"args1 - output path of coefficients \n" +
+					"args2 - number of p-values for each map's independent BUM fit \n"
 					);
 			return;
 		}
@@ -38,18 +39,23 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 	public int run(String[] args) throws Exception {
 
 		Configuration conf = this.getConf();
+		
+		conf.set("numSamplesForFit", args[2]);
 
 		Job job = Job.getInstance(conf, "MapReduceCDFFalseDiscoveryRate");
 		job.setJarByClass(MapReduceCDFFalseDiscoveryRate.class);
 
 		job.setJobName("calcBUM");
-
+		
 		job.setMapperClass(FDRCalculationMapping.class);
 		job.setCombinerClass(FDRModelAveragingReducer.class);
 		job.setReducerClass(FDRModelAveragingReducer.class);
+	
+		job.setMapOutputKeyClass(Text.class);
+		job.setMapOutputValueClass(Pi0AlphaBetaCountTuple.class);
 
-		//job.setOutputKeyClass(Text.class);
-		//job.setOutputValueClass(IntWritable.class);
+		job.setOutputKeyClass(Text.class);
+		job.setOutputValueClass(Pi0AlphaBetaCountTuple.class);
 
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[1]));
@@ -68,7 +74,7 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 			tmpPValues.add(transformXmlToPValues(value.toString()));
 
-			int numSamplesForFit = 100;  // how many pvalues are used for fitting the BUM
+			int numSamplesForFit = Integer.parseInt(context.getConfiguration().get("numSamplesForFit"));
 			if (tmpPValues.size() == numSamplesForFit) {
 
 				double[][] pValues = calculateEmpiricalCDF(tmpPValues.toArray(new Double[numSamplesForFit]));
