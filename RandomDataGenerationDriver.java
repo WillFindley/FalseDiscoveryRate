@@ -152,9 +152,9 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 					Double.parseDouble(context.getConfiguration().get("beta")));
 		}
 
-		private double calculateP() {
+		private double calculateP(int trueFinding) {
 
-			if (rndm.nextDouble() <= this.pi0) {
+			if (trueFinding == 0) {
 				return rndm.nextDouble();
 			} else {
 				return TrueHypotheses.inverseCumulativeProbability(rndm.nextDouble());
@@ -165,9 +165,11 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 
 			if (createdRecords < numRecordsToCreate) {
 				int rowId = Math.abs(rndm.nextInt()) % 1000000000;
-				double p = calculateP();
+				
+				int trueFinding = (rndm.nextDouble() >= this.pi0) ? 1 : 0; 
+				double p = calculateP(trueFinding);
 
-				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" q=\"" + 1 + "\" />";
+				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" t=\"" + trueFinding + "\" />";
 				key.set(randomRecord); 
 				createdRecords++; 
 				return true;

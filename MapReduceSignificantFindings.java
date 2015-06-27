@@ -17,22 +17,23 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.Reducer;
 import org.apache.hadoop.util.ToolRunner;
 
-public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
+public class MapReduceSignificantFindings extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
 
-		if (args.length != 3) {
+		if (args.length != 4) {
 			System.out.println("\n" + 
 					"This program runs a mapreduce to determine the coefficients for a beta-uniform model of the p-value CDF \n" +  
 					"Usage is: \n\n" +
-					"hadoop jar [jarFile] MapReduceCDFFalseDiscoveryRate [args0] [args1] [args2] \n\n" + 
+					"hadoop jar [jarFile] MapReduceSignificantFindings [args0] [args1] [args2] [args3] \n\n" + 
 					"args0 - input path of p-values \n" +
-					"args1 - output path of coefficients \n" +
-					"args2 - number of p-values for each map's independent BUM fit \n"
+					"args1 - path to BUM coefficients \n" +
+					"args2 - output path to significant findings \n" +
+					"args3 - false discovery rate cutoff for significance \n"
 					);
 			return;
 		}
-		int res = ToolRunner.run(new Configuration(), new MapReduceCDFFalseDiscoveryRate(), args);
+		int res = ToolRunner.run(new Configuration(), new MapReduceSignificantFindings(), args);
 		System.exit(res);
 	}
 
@@ -40,15 +41,16 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 
 		Configuration conf = this.getConf();
 		
-		conf.set("numSamplesForFit", args[2]);
+		// the q-value cut-off is the highest tolerated false discovery rate for significance (or 1 - the Bayesian likelihood of being a true discovery)
+		conf.set("significanceQValueCutOff", args[3]);
+		conf.set("pathToBUMCoefficients", args[1]);
 
-		Job job = Job.getInstance(conf, "MapReduceCDFFalseDiscoveryRate");
+		Job job = Job.getInstance(conf, "");
 		job.setJarByClass(MapReduceCDFFalseDiscoveryRate.class);
 
 		job.setJobName("calcBUM");
 		
-		job.setMapperClass(FDRCalculationMapping.class);
-		job.setCombinerClass(FDRModelAveragingReducer.class);
+		job.setMapperClass(CheckSignificanceMapper.class);
 		job.setReducerClass(FDRModelAveragingReducer.class);
 	
 		job.setMapOutputKeyClass(Text.class);
@@ -58,17 +60,100 @@ public class MapReduceCDFFalseDiscoveryRate extends Configured implements Tool {
 		job.setOutputValueClass(Pi0AlphaBetaCountTuple.class);
 
 		FileInputFormat.addInputPath(job, new Path(args[0]));
-		FileOutputFormat.setOutputPath(job, new Path(args[1]));
+		FileOutputFormat.setOutputPath(job, new Path(args[2]));
 
 		return job.waitForCompletion(true) ? 0 : 1;
 	}
 
-	public static class FDRCalculationMapping extends Mapper<Object, Text, Text, Pi0AlphaBetaCountTuple> {
+	public static class CheckSignificanceMapper extends Mapper<Object, Text, Text, Pi0AlphaBetaCountTuple> {
 
-		// allContribute is only one text entry because everything will be averaged together in the reducer 
-		private Text allContribute = new Text("BUM coefficients");
-		private Pi0AlphaBetaCountTuple coeffAns = new Pi0AlphaBetaCountTuple();
-		private ArrayList<Double> tmpPValues = new ArrayList<Double>();
+		private double signficancePValueCutoff = 0;
+
+		public void setup(Context context) throws IOException, InterruptedException {
+
+			try {
+				Path pt=new Path("hdfs:" + context.getConfiguration().get("pathToBUMCoefficients") + "/part-r-00000");
+				FileSystem fs = FileSystem.get(new Configuration());
+				BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(pt)));
+				String line = br.readLine();
+			} catch (IOException e) {
+				System.err.println("File opening failed:");
+				e.printStackTrace();
+			}
+
+		        String startDelim = "pi0: ";
+			String stopDelim = "\talpha";
+			int startIndex = 0;
+			int stopIndex = 0;
+	
+			startIndex = line.indexOf(startDelim,stopIndex);
+			startIndex += startDelim.length();
+			stopIndex = line.indexOf(stopDelim,startIndex);
+
+			double pi0 = Double.parseDouble(line.substring(startIndex,stopIndex));
+
+
+		        String startDelim = "alpha: ";
+			String stopDelim = "\tbeta";
+			int startIndex = 0;
+			int stopIndex = 0;
+	
+			startIndex = line.indexOf(startDelim,stopIndex);
+			startIndex += startDelim.length();
+			stopIndex = line.indexOf(stopDelim,startIndex);
+
+			double alpha = Double.parseDouble(line.substring(startIndex,stopIndex));
+
+
+		        String startDelim = "beta: ";
+			String stopDelim = "\tcount";
+			int startIndex = 0;
+			int stopIndex = 0;
+	
+			startIndex = line.indexOf(startDelim,stopIndex);
+			startIndex += startDelim.length();
+			stopIndex = line.indexOf(stopDelim,startIndex);
+
+			double beta = Double.parseDouble(line.substring(startIndex,stopIndex));
+
+			
+			signficancePValueCutoff = findSignficancePValueCutoff(pi0,alpha,beta,Double.parseDouble(context.getConfiguration().get("significanceQValueCutOff")));
+		}
+
+		public double findSignficancePValueCutoff(double pi0, double alpha, double beta, double significanceQValueCutoff) {
+
+			if ((1-pi0) <= significanceQValueCutoff) {
+				return 1;
+			}
+
+			BetaDistribution trueDiscoveries = new BetaDistribution(alpha, beta);
+			
+			double upperBound = 1;
+			double lowerBound = 0;
+			double boundTolerance = Math.pow(10,-4);
+
+			double significantPValueCutoffGuess;
+			double fractionDifferenceInBounds;
+			do {
+				significantPValueCutoffGuess = (lowerBound + upperBound) / 2;
+				if (determineQValue(pi0,trueDiscoveries,significantPValueCutoffGuess) <= significanceQValueCutoff) {
+					lowerBound = significantPValueCutoffGuess;
+				} else {
+					upperBound = significantPValueCutoffGuess;
+				}
+				fractionDifferenceInBounds = (upperBound - lowerBound) / upperBound;
+			while (fractionDifferenceInBounds > boundTolerance);
+
+			return significantPValueCutoffGuess;
+		}
+
+		public double determineQValue(double pi0, BetaDistribution trueDiscoveries, double significantPValueCutoffGuess) {
+
+			double portionFalseDiscoveries = pi0 * significantPValueCutoffGuess;
+			double portionTrueDiscoveries = (1-pi0) * trueDiscoveries.cumulativeProbability(significantPValueCutoffGuess);
+
+			return portionFalseDiscoveries / (portionFalseDiscoveries + portionTrueDiscoveries);
+		}
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 
