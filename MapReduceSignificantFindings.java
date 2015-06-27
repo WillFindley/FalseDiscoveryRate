@@ -25,15 +25,17 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 	public static void main(String[] args) throws Exception {
 
-		if (args.length != 4) {
+		if (args.length != 6) {
 			System.out.println("\n" + 
 					"This program runs a mapreduce to determine the coefficients for a beta-uniform model of the p-value CDF \n" +  
 					"Usage is: \n\n" +
-					"hadoop jar [jarFile] MapReduceSignificantFindings [args0] [args1] [args2] [args3] \n\n" + 
+					"hadoop jar [jarFile] MapReduceSignificantFindings [args0] [args1] [args2] [args3] [args4] [args5] \n\n" + 
 					"args0 - input path of p-values \n" +
-					"args1 - path to BUM coefficients \n" +
-					"args2 - output path to significant findings \n" +
-					"args3 - false discovery rate cutoff for significance \n"
+					"args1 - output path to significant findings \n" +
+					"args2 - pi0 proportion of null hypotheses \n" +
+					"args3 - alpha for the beta distribution for the true hypotheses \n" +
+					"args4 - beta for the beta distribution for the true hypotheses \n" +
+					"args5 - false discovery rate cutoff for significance \n"
 					);
 			return;
 		}
@@ -46,8 +48,10 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 		Configuration conf = this.getConf();
 		
 		// the q-value cut-off is the highest tolerated false discovery rate for significance (or 1 - the Bayesian likelihood of being a true discovery)
-		conf.set("significanceQValueCutOff", args[3]);
-		conf.set("pathToBUMCoefficients", args[1]);
+		conf.set("significanceQValueCutOff", args[5]);
+		conf.set("pi0", args[2]);
+		conf.set("alpha", args[3]);
+		conf.set("beta", args[4]);
 
 		Job job = Job.getInstance(conf, "");
 		job.setJarByClass(MapReduceCDFFalseDiscoveryRate.class);
@@ -63,7 +67,7 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 		job.setOutputValueClass(Text.class);
 
 		FileInputFormat.addInputPath(job, new Path(args[0]));
-		FileOutputFormat.setOutputPath(job, new Path(args[2]));
+		FileOutputFormat.setOutputPath(job, new Path(args[1]));
 
 		return job.waitForCompletion(true) ? 0 : 1;
 	}
@@ -74,51 +78,9 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 		public void setup(Context context) throws IOException, InterruptedException {
 
-			String line = "";
-			try {
-				Path pt=new Path("hdfs:" + context.getConfiguration().get("pathToBUMCoefficients") + "/part-r-00000");
-				FileSystem fs = FileSystem.get(new Configuration());
-				BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(pt)));
-				line = br.readLine();
-			} catch (IOException e) {
-				System.err.println("File opening failed:");
-				e.printStackTrace();
-			}
-
-		        String startDelim = "pi0: ";
-			String stopDelim = "\talpha";
-			int startIndex = 0;
-			int stopIndex = 0;
-	
-			startIndex = line.indexOf(startDelim,stopIndex);
-			startIndex += startDelim.length();
-			stopIndex = line.indexOf(stopDelim,startIndex);
-
-			double pi0 = Double.parseDouble(line.substring(startIndex,stopIndex));
-
-
-		        startDelim = "alpha: ";
-			stopDelim = "\tbeta";
-			startIndex = 0;
-			stopIndex = 0;
-	
-			startIndex = line.indexOf(startDelim,stopIndex);
-			startIndex += startDelim.length();
-			stopIndex = line.indexOf(stopDelim,startIndex);
-
-			double alpha = Double.parseDouble(line.substring(startIndex,stopIndex));
-
-
-		        startDelim = "beta: ";
-			stopDelim = "\tcount";
-			startIndex = 0;
-			stopIndex = 0;
-	
-			startIndex = line.indexOf(startDelim,stopIndex);
-			startIndex += startDelim.length();
-			stopIndex = line.indexOf(stopDelim,startIndex);
-
-			double beta = Double.parseDouble(line.substring(startIndex,stopIndex));
+			double pi0 = Double.parseDouble(context.getConfiguration().get("pi0"));
+			double alpha = Double.parseDouble(context.getConfiguration().get("alpha"));
+			double beta = Double.parseDouble(context.getConfiguration().get("beta"));
 
 			findSignficancePValueCutoff(pi0,alpha,beta,Double.parseDouble(context.getConfiguration().get("significanceQValueCutOff")));
 		}
