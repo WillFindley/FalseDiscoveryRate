@@ -4,7 +4,11 @@ import java.util.Comparator;
 import java.util.Random;
 import java.util.ArrayList;
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
@@ -51,13 +55,12 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 		job.setJobName("calcBUM");
 		
 		job.setMapperClass(CheckSignificanceMapper.class);
-		job.setReducerClass(FDRModelAveragingReducer.class);
 	
-		job.setMapOutputKeyClass(Text.class);
-		job.setMapOutputValueClass(Pi0AlphaBetaCountTuple.class);
+		job.setMapOutputKeyClass(NullWritable.class);
+		job.setMapOutputValueClass(Text.class);
 
-		job.setOutputKeyClass(Text.class);
-		job.setOutputValueClass(Pi0AlphaBetaCountTuple.class);
+		job.setOutputKeyClass(NullWritable.class);
+		job.setOutputValueClass(Text.class);
 
 		FileInputFormat.addInputPath(job, new Path(args[0]));
 		FileOutputFormat.setOutputPath(job, new Path(args[2]));
@@ -65,17 +68,18 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 		return job.waitForCompletion(true) ? 0 : 1;
 	}
 
-	public static class CheckSignificanceMapper extends Mapper<Object, Text, Text, Pi0AlphaBetaCountTuple> {
+	public static class CheckSignificanceMapper extends Mapper<Object, Text, NullWritable, Text> {
 
 		private double signficancePValueCutoff = 0;
 
 		public void setup(Context context) throws IOException, InterruptedException {
 
+			String line = "";
 			try {
 				Path pt=new Path("hdfs:" + context.getConfiguration().get("pathToBUMCoefficients") + "/part-r-00000");
 				FileSystem fs = FileSystem.get(new Configuration());
 				BufferedReader br = new BufferedReader(new InputStreamReader(fs.open(pt)));
-				String line = br.readLine();
+				line = br.readLine();
 			} catch (IOException e) {
 				System.err.println("File opening failed:");
 				e.printStackTrace();
@@ -93,10 +97,10 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 			double pi0 = Double.parseDouble(line.substring(startIndex,stopIndex));
 
 
-		        String startDelim = "alpha: ";
-			String stopDelim = "\tbeta";
-			int startIndex = 0;
-			int stopIndex = 0;
+		        startDelim = "alpha: ";
+			stopDelim = "\tbeta";
+			startIndex = 0;
+			stopIndex = 0;
 	
 			startIndex = line.indexOf(startDelim,stopIndex);
 			startIndex += startDelim.length();
@@ -105,10 +109,10 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 			double alpha = Double.parseDouble(line.substring(startIndex,stopIndex));
 
 
-		        String startDelim = "beta: ";
-			String stopDelim = "\tcount";
-			int startIndex = 0;
-			int stopIndex = 0;
+		        startDelim = "beta: ";
+			stopDelim = "\tcount";
+			startIndex = 0;
+			stopIndex = 0;
 	
 			startIndex = line.indexOf(startDelim,stopIndex);
 			startIndex += startDelim.length();
@@ -116,14 +120,14 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 			double beta = Double.parseDouble(line.substring(startIndex,stopIndex));
 
-			
-			signficancePValueCutoff = findSignficancePValueCutoff(pi0,alpha,beta,Double.parseDouble(context.getConfiguration().get("significanceQValueCutOff")));
+			findSignficancePValueCutoff(pi0,alpha,beta,Double.parseDouble(context.getConfiguration().get("significanceQValueCutOff")));
 		}
 
-		public double findSignficancePValueCutoff(double pi0, double alpha, double beta, double significanceQValueCutoff) {
+		public void findSignficancePValueCutoff(double pi0, double alpha, double beta, double significanceQValueCutoff) {
 
 			if ((1-pi0) <= significanceQValueCutoff) {
-				return 1;
+				signficancePValueCutoff = 1;
+				return;
 			}
 
 			BetaDistribution trueDiscoveries = new BetaDistribution(alpha, beta);
@@ -142,9 +146,9 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 					upperBound = significantPValueCutoffGuess;
 				}
 				fractionDifferenceInBounds = (upperBound - lowerBound) / upperBound;
-			while (fractionDifferenceInBounds > boundTolerance);
+			} while (fractionDifferenceInBounds > boundTolerance);
 
-			return significantPValueCutoffGuess;
+			signficancePValueCutoff = significantPValueCutoffGuess;
 		}
 
 		public double determineQValue(double pi0, BetaDistribution trueDiscoveries, double significantPValueCutoffGuess) {
@@ -157,23 +161,10 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 		public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
 
-			tmpPValues.add(transformXmlToPValues(value.toString()));
+			double pValue = transformXmlToPValues(value.toString()).doubleValue();
 
-			int numSamplesForFit = Integer.parseInt(context.getConfiguration().get("numSamplesForFit"));
-			if (tmpPValues.size() == numSamplesForFit) {
-
-				double[][] pValues = calculateEmpiricalCDF(tmpPValues.toArray(new Double[numSamplesForFit]));
-				tmpPValues = new ArrayList<Double>();
-
-				double[] coeffs = getOptCoeffs(pValues);
-
-				coeffAns.setPi0(coeffs[0]);
-				coeffAns.setAlpha(coeffs[1]);
-				coeffAns.setBeta(coeffs[2]);
-				coeffAns.setCount(1);
-
-				// BUM = Beta-Uniform Distribution
-				context.write(allContribute, coeffAns);
+			if (pValue <= signficancePValueCutoff) {
+				context.write(NullWritable.get(), value);
 			}
 		}
 
@@ -189,130 +180,6 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 			stopIndex = xml.indexOf(stopDelim,startIndex);
 
 			return Double.parseDouble(xml.substring(startIndex,stopIndex));
-		}
-
-		private double[][] calculateEmpiricalCDF(Double[] tmpPValues) {
-
-			double[][] pValues = new double[tmpPValues.length][2];
-			for (int i = 0; i < tmpPValues.length; i++) {
-				pValues[i][0] = tmpPValues[i].doubleValue();
-			}
-
-			// sort on p-values so that second column can be filled with empirical CDF values
-			Arrays.sort(pValues, new Comparator<double[]>() {
-				@Override
-				public int compare(double[] entry1, double[] entry2) {
-					return Double.compare(entry1[0],entry2[0]);
-				}
-			});
-
-			// calculate emprical CDF values
-			for (int i = 1; i <= pValues.length; i++) {
-				pValues[i-1][1] = i / (double) pValues.length;
-			}
-
-			return pValues;
-		}
-
-		private double[] getOptCoeffs(double[][] pValues) {	
-
-			Random rndm = new Random();
-
-			// pi0 is 1 because should always conservatively start by overestimating the proportion of negatives	
-			double[] coeffs = {1.0, rndm.nextDouble(), 1+rndm.nextInt(9)+rndm.nextDouble()};
-			double avDelta = 1;
-			double oldDelta = avDelta;
-			double learningRate = 2;
-
-			int sigDigits = 4; // number of significant digits in the model parameters;
-			double tolerance = 1.0 / Math.pow(10,sigDigits);
-			do {
-				oldDelta = avDelta;
-				// coeffs is implicitly returned because it is modified at the reference position
-				avDelta = stochasticGradientDescent(pValues, coeffs, tolerance, learningRate);
-				if (oldDelta < avDelta) learningRate *= 0.9;
-			} while (avDelta >= tolerance);
-
-			return coeffs;	
-		}
-
-		private double stochasticGradientDescent(double[][] pValues, double[] coeffs, double gradientStepSize, double learningRate) {
-
-			pValues = shuffleEmpiricalCDF(pValues);
-
-			double avDelta = 0;
-			double momentum = 0.5;
-			double deltaPi0 = 0;
-			double deltaAlpha = 0;
-			double deltaBeta = 0;
-			for (double[] data : pValues) {
-
-				deltaPi0 = momentum * deltaPi0 + (1-momentum) * learningRate *
-					(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0] + (gradientStepSize/2),coeffs[1],coeffs[2]),2) - 
-					 Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0] - (gradientStepSize/2),coeffs[1],coeffs[2]),2)) / gradientStepSize;
-				deltaAlpha = momentum * deltaAlpha + (1-momentum) * learningRate *
-					(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1] + (gradientStepSize/2),coeffs[2]),2) -
-					 Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1] - (gradientStepSize/2),coeffs[2]),2)) / gradientStepSize;
-				deltaBeta = momentum * deltaBeta + (1-momentum) * learningRate *
-					(Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1],coeffs[2] + (gradientStepSize/2)),2) -
-					 Math.pow(data[1] - calcModelCDFValue(data[0], coeffs[0],coeffs[1],coeffs[2] - (gradientStepSize/2)),2)) / gradientStepSize;
-				avDelta = (avDelta + Math.sqrt(Math.pow(deltaPi0,2) + Math.pow(deltaAlpha,2) + Math.pow(deltaBeta,2)))/2;
-
-				System.out.println("Current average error: " + avDelta);
-
-				coeffs[0] = Math.min(1.0, Math.max(0.0, coeffs[0] - deltaPi0));
-				coeffs[1] = Math.min(1.0-gradientStepSize, Math.max(gradientStepSize, coeffs[1] - deltaAlpha));
-				coeffs[2] = Math.max(1.0+gradientStepSize, coeffs[2] - deltaBeta);
-
-			}
-			return avDelta;	
-		}
-
-		public double[][] shuffleEmpiricalCDF(double[][] pValues) {
-
-			Random rndm = new Random();
-
-			int ranSpot;
-			double[] tmp;
-			for (int i = 0; i < pValues.length; i++) {
-				ranSpot = rndm.nextInt(pValues.length-i) + i;
-				tmp = pValues[i].clone();
-				pValues[i] = pValues[ranSpot].clone();
-				pValues[ranSpot] = tmp.clone();
-			}
-			return pValues;
-		}
-
-		public double calcModelCDFValue(double p, double pi0, double alpha, double beta) {
-
-			return pi0*p + (1-pi0)*new BetaDistribution(alpha, beta).cumulativeProbability(p);
-		}
-
-	}
-
-	public static class FDRModelAveragingReducer extends Reducer<Text, Pi0AlphaBetaCountTuple, Text, Pi0AlphaBetaCountTuple> {
-
-		private Pi0AlphaBetaCountTuple result = new Pi0AlphaBetaCountTuple();
-
-		public void reduce(Text key, Iterable<Pi0AlphaBetaCountTuple> values, Context context) throws IOException, InterruptedException {
-
-			double pi0 = 0;
-			double alpha = 0;
-			double beta = 0;
-			long count = 0;
-			for (Pi0AlphaBetaCountTuple val : values) {
-				pi0 += val.getCount() * val.getPi0();
-				alpha += val.getCount() * val.getAlpha();
-				beta += val.getCount() * val.getBeta();
-				count += val.getCount();
-			}
-
-			result.setCount(count);
-			result.setPi0(pi0 / count);
-			result.setAlpha(alpha / count);
-			result.setBeta(beta / count);
-
-			context.write(key, result);
 		}
 	}
 }
