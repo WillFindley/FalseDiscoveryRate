@@ -47,8 +47,9 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 		Configuration conf = this.getConf();
 		
-		// the q-value cut-off is the highest tolerated false discovery rate for significance (or 1 - the Bayesian likelihood of being a true discovery)
+		// the q-value cut-off is the highest tolerated false discovery rate for significance (or 1 minus the Bayesian likelihood of being a true discovery)
 		conf.set("significanceQValueCutOff", args[5]);
+		// these are determined from the output of the BUM fitting mapreduce
 		conf.set("pi0", args[2]);
 		conf.set("alpha", args[3]);
 		conf.set("beta", args[4]);
@@ -74,10 +75,12 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 	public static class CheckSignificanceMapper extends Mapper<Object, Text, NullWritable, Text> {
 
-		private double signficancePValueCutoff = 0;
+		// set to 0 so that nothing is returned as significant, by default 
+		private double significancePValueCutoff = 0;
 
 		public void setup(Context context) throws IOException, InterruptedException {
 
+			// gets the BUM coefficients for the p-value CDF
 			double pi0 = Double.parseDouble(context.getConfiguration().get("pi0"));
 			double alpha = Double.parseDouble(context.getConfiguration().get("alpha"));
 			double beta = Double.parseDouble(context.getConfiguration().get("beta"));
@@ -87,13 +90,16 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 		public void findSignficancePValueCutoff(double pi0, double alpha, double beta, double significanceQValueCutoff) {
 
+			// if there are so few true negatives that everything is significant to this FDR, then just return eveything as significant by setting the significance cutoff to 1
 			if ((1-pi0) <= significanceQValueCutoff) {
-				signficancePValueCutoff = 1;
+				significancePValueCutoff = 1;
 				return;
 			}
 
+			// true discoveries are those modeled by the beta distribution in the BUM model
 			BetaDistribution trueDiscoveries = new BetaDistribution(alpha, beta);
 			
+			// the significance cutoff must be between 0 and 1
 			double upperBound = 1;
 			double lowerBound = 0;
 			double boundTolerance = Math.pow(10,-4);
@@ -101,23 +107,30 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 			double significantPValueCutoffGuess;
 			double fractionDifferenceInBounds;
 			do {
+				// essentially a binary search for the p-value significance cutoff
 				significantPValueCutoffGuess = (lowerBound + upperBound) / 2;
+				// if the q-value for this p-value from our BUM model is less than what we want, check to the right of this P-value guess, otherwise check to the left
 				if (determineQValue(pi0,trueDiscoveries,significantPValueCutoffGuess) <= significanceQValueCutoff) {
 					lowerBound = significantPValueCutoffGuess;
 				} else {
 					upperBound = significantPValueCutoffGuess;
 				}
+				// make sure that the significant digits in the p-value cutoff are as specified above for bound tolerance
 				fractionDifferenceInBounds = (upperBound - lowerBound) / upperBound;
 			} while (fractionDifferenceInBounds > boundTolerance);
 
-			signficancePValueCutoff = significantPValueCutoffGuess;
+			// the guess is now the answer
+			significancePValueCutoff = significantPValueCutoffGuess;
 		}
 
 		public double determineQValue(double pi0, BetaDistribution trueDiscoveries, double significantPValueCutoffGuess) {
 
+			// calculate the portion of true discoveries at this p-value cutoff using the uniform distribution CDF
 			double portionFalseDiscoveries = pi0 * significantPValueCutoffGuess;
+			// calculate the portion of false discoveries at this p-value cutoff using the beta distribution CDF
 			double portionTrueDiscoveries = (1-pi0) * trueDiscoveries.cumulativeProbability(significantPValueCutoffGuess);
 
+			// return the false discovery rate at the p-value, i.e., the q-value
 			return portionFalseDiscoveries / (portionFalseDiscoveries + portionTrueDiscoveries);
 		}
 
@@ -125,7 +138,8 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 			double pValue = transformXmlToPValues(value.toString()).doubleValue();
 
-			if (pValue <= signficancePValueCutoff) {
+			// since the setup determined what the significance cutoff is, use the map to only query out the significant p-values
+			if (pValue <= significancePValueCutoff) {
 				context.write(NullWritable.get(), value);
 			}
 		}
@@ -141,6 +155,7 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 			startIndex += startDelim.length();
 			stopIndex = xml.indexOf(stopDelim,startIndex);
 
+			// parse the xml line for the p-value
 			return Double.parseDouble(xml.substring(startIndex,stopIndex));
 		}
 	}
