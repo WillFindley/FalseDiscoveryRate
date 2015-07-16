@@ -6,10 +6,10 @@ import org.apache.hadoop.io.Writable;
 
 public class Pi0AlphaBetaCountTuple implements Writable {
 
-	private double pi0 = 0;
-	private double alpha = 0;
-	private double beta = 0;
-	private long count = 0;
+	private double pi0 = 0;		// proportion of uniform distribution in BUM (true negatives)
+	private double alpha = 0;	// alpha coefficient for the beta distribution in BUM (true positives)
+	private double beta = 0;	// beta coefficient for the beta distribution in BUM (true positives)
+	private long count = 0;		// the number of tuples contributing to this tuple's coefficient average
 
 	public double getPi0() {
 
