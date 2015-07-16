@@ -61,8 +61,8 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 		Path outputDir = new Path(args[5]);
 
 		conf.set("pi0", args[2]);	// proportion of false hypotheses
-		conf.set("alpha", args[3]);	// effect of low p-values
-		conf.set("beta", args[4]);	// efffect of hight p-values
+		conf.set("alpha", args[3]);	// true hypotheses effect on low p-values
+		conf.set("beta", args[4]);	// true hypotheses effect on high p-values
 		Job job = Job.getInstance(conf, "RandomDataGenerationDriver");
 		job.setJarByClass(RandomDataGenerationDriver.class);
 
@@ -146,14 +146,19 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 
 		public void initialize(InputSplit split, TaskAttemptContext context) throws IOException, InterruptedException {
 
+			// figure out how many p-values to write
 			this.numRecordsToCreate = context.getConfiguration().getInt(RandomPValueInputFormat.NUM_RECORDS_PER_TASK, -1);
+			// proportion of false hypotheses (always uniformly distributed due to definition of p-value)
 			this.pi0 = Double.parseDouble(context.getConfiguration().get("pi0"));
+			// distribution of true hypotheses
 			this.TrueHypotheses = new BetaDistribution(Double.parseDouble(context.getConfiguration().get("alpha")),
 					Double.parseDouble(context.getConfiguration().get("beta")));
 		}
 
+		// method actually calculates the p-values
 		private double calculateP(int trueFinding) {
 
+			// false hypotheses are uniformly distributed and true findings follow the beta distribution for p-values
 			if (trueFinding == 0) {
 				return rndm.nextDouble();
 			} else {
@@ -163,14 +168,19 @@ public class RandomDataGenerationDriver extends Configured implements Tool {
 
 		public boolean nextKeyValue() throws IOException, InterruptedException {
 
+			// keep writing p-value rows if not enough records yet
 			if (createdRecords < numRecordsToCreate) {
+				// this is a junk label key for the hypothesis
 				int rowId = Math.abs(rndm.nextInt()) % 1000000000;
 				
+				// determine stochastically if this is a true or false hypothesis based on the pi0 from the provided BUM model
 				int trueFinding = (rndm.nextDouble() >= this.pi0) ? 1 : 0; 
+				// calculate a random p-value based on whether it is a true or false hypothesis
 				double p = calculateP(trueFinding);
 
+				// write the label, p-value, and a 1 for true difference or 0 for false difference
 				String randomRecord = "<row Id=\"" + rowId + "\" p=\"" + p + "\" t=\"" + trueFinding + "\" />";
-				key.set(randomRecord); 
+				key.set(randomRecord);
 				createdRecords++; 
 				return true;
 			} else {
