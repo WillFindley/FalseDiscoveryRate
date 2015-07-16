@@ -27,7 +27,7 @@ public class MapReduceSignificantFindings extends Configured implements Tool {
 
 		if (args.length != 6) {
 			System.out.println("\n" + 
-					"This program runs a mapreduce to determine the coefficients for a beta-uniform model of the p-value CDF \n" +  
+					"This program runs a mapreduce to determine the p-value entries that are significant at the FDR cutoff \n" +  
 					"Usage is: \n\n" +
 					"hadoop jar [jarFile] MapReduceSignificantFindings [args0] [args1] [args2] [args3] [args4] [args5] \n\n" + 
 					"args0 - input path of p-values \n" +
